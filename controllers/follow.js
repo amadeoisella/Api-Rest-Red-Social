@@ -1,29 +1,21 @@
-//other imports
 const Follow = require("../models/Follow");
 const User = require("../models/User");
 
-//importar servicios
 const followService = require("../services/followService");
 
-//importas dependencias
 const mongoosePagination = require("mongoose-pagination");
 
-//accion de guardar un follow (seguir)
 const save = async (req, res) => {
   try {
-    // Get data from the request body
     const params = req.body;
 
-    // Get the ID of the authenticated user
     const identity = req.user;
 
-    // Create a new Follow object
     let userToFollow = new Follow({
       user: identity.id,
       followed: params.followed,
     });
 
-    // Save the object to the database
     const followStored = await userToFollow.save();
 
     return res.status(200).send({
@@ -40,16 +32,12 @@ const save = async (req, res) => {
   }
 };
 
-//accion de borrar un follow (dejar de seguir)
 const unfollow = async (req, res) => {
   try {
-    // Get the ID of the authenticated user
     const userId = req.user.id;
 
-    // Get the ID of the user to unfollow
     const followedId = req.params.id;
 
-    // Find and remove the matching follow document
     const followStored = await Follow.findOneAndRemove({
       user: userId,
       followed: followedId,
@@ -69,28 +57,23 @@ const unfollow = async (req, res) => {
 
 const following = async (req, res) => {
   try {
-    // Sacar el id del usuario identificado
     let userId = req.user.id;
 
-    // Comprobar si me llega el id por parámetro en la URL
     if (req.params.id) userId = req.params.id;
 
-    // Comprobar si me llega la página, sino es la página 1
     let page = 1;
     if (req.params.page) page = req.params.page;
 
-    // Usuarios por página que se quieren mostrar
     const itemsPerPage = 5;
 
     const query = Follow.find({ user: userId })
-      .populate("user followed", "-password -role -__v")
+      .populate("user followed", "-password -email -role -__v")
       .skip((page - 1) * itemsPerPage)
       .limit(itemsPerPage);
 
     const follows = await query.exec();
     const total = await Follow.countDocuments({ user: userId }).exec();
 
-    // Sacar un array de ids de los usuarios que me siguen para ver si me siguen o no
     let followUserIds = await followService.followUserIds(req.user.id, res);
 
     return res.status(200).send({
@@ -99,8 +82,8 @@ const following = async (req, res) => {
       follows,
       total,
       pages: Math.ceil(total / itemsPerPage),
-      user_following: followUserIds.following, // Acceder a la propiedad `following` sin invocarla como una función
-      user_follow_me: followUserIds.followers, // Acceder a la propiedad `followers` sin invocarla como una función
+      user_following: followUserIds.following,
+      user_follow_me: followUserIds.followers,
     });
   } catch (error) {
     return res.status(500).send({
@@ -110,15 +93,44 @@ const following = async (req, res) => {
   }
 };
 
-//accion listado de usuarios que me "siguen" o siguen a cualquier otro usuario
-const followers = (req, res) => {
-  return res.status(200).send({
-    status: "success",
-    message: "list of users following me",
-  });
+const followers = async (req, res) => {
+  try {
+    let userId = req.user.id;
+
+    if (req.params.id) userId = req.params.id;
+
+    let page = 1;
+    if (req.params.page) page = req.params.page;
+
+    const itemsPerPage = 5;
+
+    const query = Follow.find({ followed: userId })
+      .populate("user", "-password -email -role -__v")
+      .skip((page - 1) * itemsPerPage)
+      .limit(itemsPerPage);
+
+    const follows = await query.exec();
+    const total = await Follow.countDocuments({ user: userId }).exec();
+
+    let followUserIds = await followService.followUserIds(req.user.id, res);
+
+    return res.status(200).send({
+      status: "success",
+      message: "List of users who follow me",
+      follows,
+      total,
+      pages: Math.ceil(total / itemsPerPage),
+      user_following: followUserIds.following,
+      user_follow_me: followUserIds.followers,
+    });
+  } catch (error) {
+    return res.status(500).send({
+      status: "error",
+      message: "An error occurred during following",
+    });
+  }
 };
 
-//exported shares
 module.exports = {
   save,
   unfollow,

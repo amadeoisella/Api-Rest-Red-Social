@@ -1,22 +1,19 @@
-//imported dependencies
 const bcrypt = require("bcrypt");
 const mongoosePagination = require("mongoose-pagination");
+const Publication = require("../models/Publication");
 const fs = require("fs");
 const path = require("path");
 
-//importar modelos
 const User = require("../models/User");
 
-//importar servicios
 const jwt = require("../services/jwt");
 const followService = require("../services/followService");
+const Follow = require("../models/Follow");
+const validate = require("../helpers/validate");
 
-// POST - registro de usuarios
 const register = (req, res) => {
-  //recoger parámetros del body
   const params = req.body;
 
-  //comprobar que me llegan (+ validacion)
   if (!params.name || !params.email || !params.password || !params.nick) {
     return res.status(400).send({
       status: "error",
@@ -24,7 +21,15 @@ const register = (req, res) => {
     });
   }
 
-  //control de usuarios duplicados
+  try {
+    validate(params);
+  } catch (erro) {
+    return res.status(400).send({
+      status: "error",
+      message: "validation failed",
+    });
+  }
+
   User.find({
     $or: [
       { email: params.email.toLowerCase() },
@@ -38,14 +43,11 @@ const register = (req, res) => {
       });
     }
 
-    //cifrar password
     const pwd = await bcrypt.hash(params.password, 10);
     params.password = pwd;
 
-    //crear objeto de usuario
     const userToSave = new User(params);
 
-    //guardar usuario en la base de datos
     userToSave.save().then((userStored) => {
       return res.status(200).send({
         status: "success",
@@ -56,9 +58,7 @@ const register = (req, res) => {
   });
 };
 
-// POST - logueo de usuarios
 const login = async (req, res) => {
-  // Recoger parámetros del body
   const params = req.body;
 
   if (!params.email || !params.password) {
@@ -69,7 +69,6 @@ const login = async (req, res) => {
   }
 
   try {
-    // Buscar en la base de datos si el usuario existe
     const user = await User.findOne({ email: params.email });
 
     if (!user) {
@@ -79,7 +78,6 @@ const login = async (req, res) => {
       });
     }
 
-    // Comprobar la contraseña
     const pwd = bcrypt.compareSync(params.password, user.password);
 
     if (!pwd) {
@@ -89,10 +87,8 @@ const login = async (req, res) => {
       });
     }
 
-    // Devolver token
     const token = jwt.createToken(user);
 
-    // Devolver datos del usuario
     return res.status(200).send({
       status: "success",
       message: "you are correctly identified",
@@ -111,13 +107,10 @@ const login = async (req, res) => {
   }
 };
 
-// GET - extraer un usuario
 const profile = async (req, res) => {
   try {
-    // recibir el parámetro del ID de usuario por la URL
     const id = req.params.id;
 
-    // consulta para obtener los datos del usuario
     const userProfile = await User.findById(id).select({
       password: 0,
       role: 0,
@@ -130,10 +123,8 @@ const profile = async (req, res) => {
       });
     }
 
-    //info de seguimiento
     const followInfo = await followService.followThisUser(req.user.id, id);
 
-    // Posteriormente, devolver información de follows
     return res.status(200).send({
       status: "success",
       user: userProfile,
@@ -148,7 +139,6 @@ const profile = async (req, res) => {
   }
 };
 
-// GET - listar usuarios por medio de pagination
 const list = async (req, res) => {
   try {
     let page = 1;
@@ -158,7 +148,7 @@ const list = async (req, res) => {
 
     let itemsPerPage = 3;
 
-    const query = User.find().sort("_id");
+    const query = User.find().select("-password -email -role -__v").sort("_id");
 
     const users = await query
       .skip((page - 1) * itemsPerPage)
@@ -173,6 +163,8 @@ const list = async (req, res) => {
       });
     }
 
+    let followUserIds = await followService.followUserIds(req.user.id, res);
+
     return res.status(200).send({
       status: "success",
       users,
@@ -180,6 +172,8 @@ const list = async (req, res) => {
       itemsPerPage,
       total,
       pages: Math.ceil(total / itemsPerPage),
+      user_following: followUserIds.following,
+      user_follow_me: followUserIds.followers,
     });
   } catch (error) {
     return res.status(500).send({
@@ -189,20 +183,16 @@ const list = async (req, res) => {
   }
 };
 
-// PUT - actualizar usuario
 const update = async (req, res) => {
   try {
-    // Recoger información del usuario a actualizar
     let userIdentity = req.user;
     let userToUpdate = req.body;
 
-    // Eliminar campos sobrantes
     delete userToUpdate.role;
     delete userToUpdate.iat;
     delete userToUpdate.exp;
     delete userToUpdate.image;
 
-    // Comprobar si el usuario existe
     const users = await User.find({
       $or: [
         { email: userToUpdate.email ? userToUpdate.email.toLowerCase() : null },
@@ -223,13 +213,13 @@ const update = async (req, res) => {
       });
     }
 
-    // Cifrar password
     if (userToUpdate.password) {
       const pwd = bcrypt.hashSync(userToUpdate.password, 10);
       userToUpdate.password = pwd;
+    } else {
+      delete userToUpdate.password;
     }
 
-    // Buscar y actualizar
     const userUpdated = await User.findByIdAndUpdate(
       { _id: userIdentity.id },
       userToUpdate,
@@ -243,7 +233,6 @@ const update = async (req, res) => {
       });
     }
 
-    // Devolver respuesta
     return res.status(200).send({
       status: "success",
       message: "Actualización de usuario correcta",
@@ -259,7 +248,6 @@ const update = async (req, res) => {
 
 const upload = async (req, res) => {
   try {
-    // Recoger el fichero de imagen y comprobar que existe
     if (!req.file) {
       return res.status(404).send({
         status: "error",
@@ -267,16 +255,12 @@ const upload = async (req, res) => {
       });
     }
 
-    // Conseguir el nombre del archivo
     let image = req.file.originalname;
 
-    // Separar la extensión del archivo
     let imageSplit = image.split(".");
     const extension = imageSplit[1];
 
-    // Comprobar la extensión
     if (extension != "png" && extension != "jpg" && extension != "jpeg") {
-      // Si no es correcta, borrar archivo
       const filePath = req.file.path;
       fs.unlink(filePath, (err) => {
         if (err) {
@@ -284,14 +268,12 @@ const upload = async (req, res) => {
         }
       });
 
-      // Devolver respuesta negativa
       return res.status(400).send({
         status: "error",
         message: "Invalid file extension",
       });
     }
 
-    // Si es correcta, guardar imagen en la base de datos
     const userUpdated = await User.findOneAndUpdate(
       { _id: req.user.id },
       { image: req.file.filename },
@@ -305,7 +287,6 @@ const upload = async (req, res) => {
       });
     }
 
-    // Devolver respuesta
     return res.status(200).send({
       status: "success",
       user: userUpdated,
@@ -325,7 +306,6 @@ const avatar = (req, res) => {
     const file = req.params.file;
     const filePath = "./uploads/avatars/" + file;
 
-    //comprobar que existe
     fs.stat(filePath, (err, stats) => {
       if (err || !stats.isFile()) {
         return res
@@ -333,7 +313,6 @@ const avatar = (req, res) => {
           .send({ status: "error", message: "no image exists" });
       }
 
-      //devolver un file
       return res.sendFile(path.resolve(filePath));
     });
   } catch (error) {
@@ -345,7 +324,34 @@ const avatar = (req, res) => {
   }
 };
 
-//exported shares
+const counters = async (req, res) => {
+  let userId = req.user.id;
+
+  if (req.params.id) {
+    userId = req.params.id;
+  }
+
+  try {
+    const following = await Follow.count({ user: userId });
+
+    const followed = await Follow.count({ followed: userId });
+
+    const publications = await Publication.count({ user: userId });
+
+    return res.status(200).send({
+      userId,
+      folowing: following,
+      followed: followed,
+      publications: publications,
+    });
+  } catch (error) {
+    return res.status(500).send({
+      status: "error",
+      message: "error in counters",
+    });
+  }
+};
+
 module.exports = {
   register,
   login,
@@ -354,4 +360,5 @@ module.exports = {
   update,
   upload,
   avatar,
+  counters,
 };

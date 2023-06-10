@@ -1,9 +1,7 @@
-//imports
 const Follow = require("../models/Follow");
 
 const followUserIds = async (identityUserId, res) => {
   try {
-    //sacar info de seguimiento
     let following = await Follow.find({ user: identityUserId })
       .select({
         followed: 1,
@@ -18,7 +16,6 @@ const followUserIds = async (identityUserId, res) => {
       })
       .exec();
 
-    //procesar array de identificadores
     let followingClean = [];
 
     following.forEach((follow) => {
@@ -40,9 +37,7 @@ const followUserIds = async (identityUserId, res) => {
   }
 };
 
-//sacar info para ver si me sigue y lo sigo
 const followThisUser = async (identityUserId, profileUserId) => {
-  //sacar info de seguimiento
   let following = await Follow.findOne({
     user: identityUserId,
     followed: profileUserId,
